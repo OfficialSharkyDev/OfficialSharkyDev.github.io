@@ -1,0 +1,59 @@
+name: Import site from old host
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download pages and assets, remove old-host references
+        run: |
+          python3 - <<'PY'
+          import re, urllib.request, pathlib
+          SRC = "https://sharkcrest-studios.buoyantfable.chatgpt.site"
+          NEW = "https://sharkcreststudios.com"
+          pages = ["/", "/games/", "/games/hide-your-monster/", "/about/", "/news/",
+                   "/news/building-the-cottage/", "/careers/", "/contact/", "/privacy/"]
+          text_files = ["/assets/site.css", "/assets/site.js", "/robots.txt", "/sitemap.xml"]
+          binaries = ["/assets/favicon.png", "/assets/banner.png", "/assets/crest.png"]
+          UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"}
+          def get(p):
+              with urllib.request.urlopen(urllib.request.Request(SRC + p, headers=UA), timeout=60) as r:
+                  return r.read()
+          cf = re.compile(r"<script>(?:(?!</script>).)*?__CF\$cv\$params(?:(?!</script>).)*?</script>", re.S)
+          def clean(t):
+              t = t.replace(SRC, NEW)
+              t = cf.sub("", t)
+              assert "chatgpt" not in t.lower() and "openai" not in t.lower(), "old host reference left"
+              return t
+          for p in pages:
+              t = clean(get(p).decode("utf-8"))
+              assert "<title" in t and "Sharkcrest" in t, "bad page " + p
+              out = pathlib.Path("." + p) / "index.html"
+              out.parent.mkdir(parents=True, exist_ok=True)
+              out.write_text(t, encoding="utf-8")
+              print("page", p, len(t))
+          for p in text_files:
+              t = clean(get(p).decode("utf-8"))
+              out = pathlib.Path("." + p)
+              out.parent.mkdir(parents=True, exist_ok=True)
+              out.write_text(t, encoding="utf-8")
+              print("file", p, len(t))
+          for p in binaries:
+              b = get(p)
+              assert b[:8] == b"\x89PNG\r\n\x1a\n", "not a png " + p
+              out = pathlib.Path("." + p)
+              out.parent.mkdir(parents=True, exist_ok=True)
+              out.write_bytes(b)
+              print("image", p, len(b))
+          pathlib.Path(".nojekyll").write_text("")
+          PY
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Import Sharkcrest Studios site from old host" || echo "nothing to commit"
+          git push
